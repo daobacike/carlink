@@ -1,0 +1,12 @@
+<!--?xml version="1.0" encoding="utf-8"?-->
+<resources>
+    <usb-accessory manufacturer="vonchenchen" model="android.usbaoa" version="0.1">
+</usb-accessory></resources>
+<!--
+const char *vendor = "vonchenchen";
+const char *model = "android.usbaoa";
+const char *description = "Android Aoa Interface";
+const char *version = "0.1";
+const char *uri = "https://www.baidu.com/";
+const char *serial = "1234567890";
+-->
