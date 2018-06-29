@@ -1,49 +1,50 @@
 package com.chuck.carlink;
 
+
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.graphics.PixelFormat;
-import android.hardware.display.DisplayManager;
-import android.hardware.display.VirtualDisplay;
-import android.media.Image;
-import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Process;
-import android.support.annotation.NonNull;
-import android.support.v7.app.AppCompatActivity;
+import android.os.Message;
 import android.os.Bundle;
-import android.util.DisplayMetrics;
-import android.util.Half;
 import android.util.Log;
-import android.view.WindowManager;
+
+import  com.chuck.carlink.autolink.Defines;
+
 
 public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
     CarLinkService.CarLinkBinder  mCarLinkBinder;
     MediaProjectionManager mMediaProjectionManager;
     MediaProjection       mMediaProjection;
-    private static final int REQUEST_MEDIA_PROJECTION = 1;
-    private Handler mBackGroundHandler;
+    private static final int MSG_COUNT_DOWN = 5;
+    private static final int MSG_ENCODE_ERR = 4;
+    private static final int MSG_NEW_FRAME = 1;
+    private static final int MSG_REQUEST_PERMISSION = 3;
+    private static final int MSG_STATUS_CHANGE = 2;
+
+    private int mCountDown = 1;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+
         Intent  intent = new Intent();
+        intent.setAction(CarLinkService.ACTION_STARTSERVICE);
         intent.setClass(this, CarLinkService.class);
         startService(intent);
         bindService(intent, mServiceConn, Context.BIND_AUTO_CREATE);
 
-        mMediaProjectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        startActivityForResult(mMediaProjectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+        //mMediaProjectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        //startActivityForResult(mMediaProjectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
         Log.d(TAG, "end of create");
     }
 
@@ -52,69 +53,95 @@ public class MainActivity extends Activity {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             mCarLinkBinder = ((CarLinkService.CarLinkBinder)service);
+            mCarLinkBinder.registListener(mServiceListener);
+            mCarLinkBinder.checkAccessoryConfigue();
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
-
+            finish();
         }
     };
 
-    private void createVirtualDisplay() {
-        DisplayMetrics dm = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getMetrics(dm);
-        int widthPixels = dm.widthPixels;
-        int heightPixels = dm.heightPixels;
-        int dpi = dm.densityDpi;
-
-        Log.d(TAG, " w:" + widthPixels + " h " + heightPixels);
-        //mMediaProjection.createVirtualDisplay("CarLink", widthPixels, heightPixels, dpi,
-         //       DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader.getSurface(), null, null);
-
-        Log.d(TAG, "end of createVirtualDisplay");
-    }
-
-    private Handler getBackGroundHandler() {
-        if (mBackGroundHandler == null) {
-            HandlerThread backThread = new HandlerThread("background image thread",
-                    Process.THREAD_PRIORITY_BACKGROUND);
-            backThread.start();
-            mBackGroundHandler = new Handler(backThread.getLooper());
-        }
-        return mBackGroundHandler;
-    }
-
-    private final ImageReader.OnImageAvailableListener onImageAvailableListener = new ImageReader.OnImageAvailableListener() {
+    public Handler mUIHandle = new Handler() {
         @Override
-        public void onImageAvailable(ImageReader reader) {
-            int numb = reader.getMaxImages();
-            Log.d(TAG, " numb :"  +  numb);
-            Image image = reader.acquireLatestImage();
-            //image.getPlanes();
-            Log.d(TAG, "Image available");
+        public void handleMessage(Message msg) {
+            switch(msg.what) {
+                case MSG_COUNT_DOWN:
+                    mCountDown = mCountDown - 1;
+                    if (mCountDown > 0) {
+                        mUIHandle.sendMessageDelayed(mUIHandle.obtainMessage(MSG_COUNT_DOWN), 1000);
+                        return;
+                    }
+                    finish();
+                    break;
+                default:
+                    break;
+            }
         }
     };
+
+    private final CarLinkService.Listener  mServiceListener = new CarLinkService.Listener() {
+        @Override
+        public void onEncodeErr() {
+
+        }
+
+        @Override
+        public void onFrameOut(int frameIn, int frameOut) {
+            Message msg = mUIHandle.obtainMessage(MSG_NEW_FRAME);
+            Bundle bundle = new Bundle();
+            bundle.putInt("FRAME_IN", frameIn);
+            bundle.putInt("FRAME_OUT", frameOut);
+            msg.setData(bundle);
+            mUIHandle.sendMessage(msg);
+        }
+
+        @Override
+        public void onLoseAccessory() {
+            mCarLinkBinder.unregistListener(mServiceListener);
+            unbindService(mServiceConn);
+            finish();
+        }
+
+        @Override
+        public void onStatusChanged(int status) {
+            Message  msg =  mUIHandle.obtainMessage();
+            Bundle bundle = new Bundle();
+            bundle.putInt("STATUS", status);
+            msg.setData(bundle);
+            mUIHandle.sendMessage(msg);
+        }
+
+        @Override
+        public void requestPermission(Intent intent, int id) {
+            switch (id) {
+                case Defines.REQUEST_CODE_CAPTURE:
+                    startActivityForResult(intent, id);
+                    break;
+                case Defines.REQUEST_CODE_BT:
+                    startActivity(intent);
+                    break;
+                case Defines.REQUEST_CODE_ROTATE:
+                    startActivity(intent);
+                    break;
+                default:
+                    moveTaskToBack(true);
+            }
+        }
+
+        @Override
+        public void requestUpdate(Bundle bundle) {
+
+        }
+    }
+
+
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        // Log.d(TAG, "start of onActivityResult  requestCode: " + requestCode + "  " + data  + "  " + resultCode);
-       if (requestCode == REQUEST_MEDIA_PROJECTION) {
-            if (data != null) {
-                mMediaProjection = mMediaProjectionManager.getMediaProjection(resultCode, data);
-                if (mMediaProjection == null) {
-                    Log.e(TAG, "mMediaProjection is null!!!");
-                    return;
-                }
-                mMediaProjection.registerCallback(new MediaProjection.Callback() {
-                    @Override
-                    public void onStop() {
-                        super.onStop();
-                        Log.d(TAG, "stopping");
-                    }
-                }, null);
-                createVirtualDisplay();
-            }
-
+       if (mCarLinkBinder != null) {
+           mCarLinkBinder.onActivityResult(int requestCode, int resultCode, Intent data);
        }
        moveTaskToBack(true);
     }

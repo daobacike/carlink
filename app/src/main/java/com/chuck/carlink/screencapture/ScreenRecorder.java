@@ -1,18 +1,34 @@
 package com.chuck.carlink.screencapture;
 
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.Image;
+import android.media.ImageReader;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.media.projection.MediaProjection;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Message;
 import android.util.Log;
 import android.view.Surface;
 
 import com.chuck.carlink.core.Packager;
 import com.chuck.carlink.tools.LogTools;
 
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
@@ -46,11 +62,15 @@ public class ScreenRecorder extends  Thread {
     private VirtualDisplay mVirtualDisplay;
     //private RESFlvDataCollecter mDataCollecter;
 
+    private ImageReader mImageReader ;
+    private int mNumber =  0;
+    private HandlerThread mHandlerThread;
+    private Handler mThreadHandler;
 
-    public ScreenRecorder(VideoEncodeConfig video, int dpi,
+    public ScreenRecorder(int width, int height, int dpi,
                           MediaProjection mp, String dstPath){
-        mWidth = video.width;
-        mHeight = video.height;
+        mWidth = width;
+        mHeight = height;
         mDpi = dpi;
         mMediaProjection = mp;
         startTime = 0;
@@ -67,23 +87,94 @@ public class ScreenRecorder extends  Thread {
 
     @Override
     public void run() {
+        setupImage();
         try {
-            try {
-                prepareEncoder();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+            while(true) {
+                sleep(5000);
             }
-            mVirtualDisplay = mMediaProjection.createVirtualDisplay(TAG + "-display",
-                    mWidth, mHeight, mDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-                    mSurface, null, null);
-            Log.d(TAG, "created virtual display: " + mVirtualDisplay);
-            recordVirtualDisplay();
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
             e.printStackTrace();
-        } finally {
-            release();
         }
     }
+
+
+    private void initThread()
+    {
+        mHandlerThread = new HandlerThread("check-message-coming");
+        mHandlerThread.start();
+
+        mThreadHandler = new Handler(mHandlerThread.getLooper());
+
+    }
+
+    private void setupImage(){
+        initThread();
+        mImageReader = ImageReader.newInstance(mWidth,mHeight, ImageFormat.JPEG, 2);
+        mImageReader.setOnImageAvailableListener(onImageAvailableListener, mThreadHandler);
+        mVirtualDisplay = mMediaProjection.createVirtualDisplay(TAG + "-display",
+                mWidth, mHeight, mDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                mImageReader.getSurface(), null, null);
+        Log.d(TAG, "created virtual display: " + mVirtualDisplay);
+    }
+
+
+    private final ImageReader.OnImageAvailableListener onImageAvailableListener = new ImageReader.OnImageAvailableListener() {
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            int numb = reader.getMaxImages();
+            Log.d(TAG, " numb :"  +  numb);
+            Image image = null;
+            try {
+                image = mImageReader.acquireLatestImage();
+                if (image != null) {
+                    final Image.Plane[] planes = image.getPlanes();
+                    if (planes.length > 0) {
+                        final ByteBuffer buffer = planes[0].getBuffer();
+                        //int pixelStride = planes[0].getPixelStride();
+                        //int rowStride = planes[0].getRowStride();
+                        //int rowPadding = rowStride - pixelStride * mWidth;
+
+
+                        // create bitmap
+                        Bitmap bmp = Bitmap.createBitmap(mWidth,
+                                mHeight, Bitmap.Config.ARGB_8888);
+                        bmp.copyPixelsFromBuffer(buffer);
+
+                        Bitmap croppedBitmap = Bitmap.createBitmap(bmp, 0, 0, mWidth, mHeight);
+
+                        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"ScreenCaptures");
+                        Log.d(TAG, " dir "  +  dir);
+                        File newFile = new File(dir, (mNumber++) +"_screen.jpg");
+                        BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(newFile));
+                        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, bos);
+                        bos.flush();
+                        bos.close();
+
+                        if (croppedBitmap != null) {
+                            croppedBitmap.recycle();
+                        }
+                        if (bmp != null) {
+                            bmp.recycle();
+                        }
+                    }
+                }
+
+
+
+
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                image.close();
+                //byteBuffer.clear();
+            }
+            Log.d(TAG, " close "  );
+            image.close();
+
+        }
+    };
 
 
     private void prepareEncoder() throws IOException {
@@ -205,12 +296,5 @@ public class ScreenRecorder extends  Thread {
 //        resFlvData.videoFrameType = frameType;
 //        mDataCollecter.collect(resFlvData, FLV_RTMP_PACKET_TYPE_VIDEO);
     }
-
-
-
-
-
-
-
 
 }
